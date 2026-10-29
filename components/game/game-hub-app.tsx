@@ -49,6 +49,17 @@ import { submitContentReport } from "@/lib/moderation-client";
 import { buildGameRolePackage, callGameLLM } from "@/lib/game-engine";
 import { downloadFile } from "@/lib/download-utils";
 import {
+  addChatContact,
+  createOrGetSession,
+  hydrateChatStorage,
+  isChatStorageHydrated,
+  loadChatContacts,
+  loadChatSessions,
+  pushChatMessage,
+  saveChatSessions,
+} from "@/lib/chat-storage";
+import { dispatchChatMessageNotice } from "@/lib/chat-notification-events";
+import {
   createDefaultGameDraft,
   deleteGameProjectionEvent,
   deleteInstalledGame,
@@ -127,6 +138,12 @@ type GameCommentDisplayItem = {
 type CommentDeleteTarget = { template: GameTemplate; comment: GameComment };
 
 const GAME_PREVIEW_LOCAL_ID_PREFIX = "preview_game_";
+// 游戏往聊天推消息的限流：10 分钟内最多 3 条，防止刷屏
+const GAME_CHAT_PUSH_LIMIT = 3;
+const GAME_CHAT_PUSH_WINDOW_MS = 10 * 60 * 1000;
+const GAME_CHAT_PUSH_MAX_LENGTH = 500;
+let gameChatPushCount = 0;
+let gameChatPushAt = 0;
 const GAME_HALL_COMMENTS_ENABLED = false;
 const GAME_DECORATIVE_CODE = "✦";
 const GAME_ALLOWED_TAGS = ["推荐", "休闲", "剧情", "解谜", "互动", "经营"];
@@ -512,6 +529,7 @@ ${body}
     callLLM: function(payload){ return request('callLLM', payload || {}); },
     callGlobalLLM: function(payload){ return request('callGlobalLLM', payload || {}); },
     recordGameEvent: function(payload){ return request('recordGameEvent', payload || {}); },
+    sendChatMessage: function(payload){ return request('sendChatMessage', payload || {}); },
     saveGame: function(data){ return request('saveGame', { data: data }); },
     loadGame: function(){ return request('loadGame'); },
     setTitleBar: function(options){ return request('setTitleBar', options || {}); },
@@ -2171,6 +2189,71 @@ export function GameHubApp({ onClose, autoOpenLocalId }: { onClose: () => void; 
       }
       if (nextState) setState(nextState);
       return { ok: true, recorded };
+    }
+
+    if (action === "sendChatMessage") {
+      ensureAdvancedAccess();
+      if (isPreviewGame(runtimeGame.localId)) {
+        return { ok: true, delivered: 0, preview: true };
+      }
+      const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+      const targetCharacterId = String(record.characterId || "").trim();
+      const rawText = typeof record.text === "string" ? record.text.trim() : "";
+      if (!targetCharacterId) throw new Error("sendChatMessage 需要 characterId。");
+      const chatCharacter = characterById.get(targetCharacterId);
+      if (!chatCharacter) throw new Error(`sendChatMessage 找不到角色：${targetCharacterId}`);
+      if (!rawText) throw new Error("sendChatMessage 需要 text。");
+      const chatText = rawText.slice(0, GAME_CHAT_PUSH_MAX_LENGTH);
+
+      // 限流：同一窗口内最多推 GAME_CHAT_PUSH_LIMIT 条
+      const pushNow = Date.now();
+      if (gameChatPushAt && pushNow - gameChatPushAt > GAME_CHAT_PUSH_WINDOW_MS) {
+        gameChatPushCount = 0;
+      }
+      if (gameChatPushCount >= GAME_CHAT_PUSH_LIMIT) {
+        return { ok: true, delivered: 0, limited: true };
+      }
+      gameChatPushCount += 1;
+      gameChatPushAt = pushNow;
+
+      // 聊天存储必须先 hydrate，否则会读到空缓存并错误地重复建立联系人
+      if (!isChatStorageHydrated()) {
+        try { await hydrateChatStorage(); } catch { /* 读不到就按空处理，由下面兜底 */ }
+      }
+
+      // 找到或建立与这个角色的一对一会话
+      let chatContact = loadChatContacts().find(item => item.characterId === targetCharacterId) || null;
+      if (!chatContact) {
+        addChatContact(targetCharacterId);
+        chatContact = loadChatContacts().find(item => item.characterId === targetCharacterId) || null;
+      }
+      if (!chatContact) throw new Error("sendChatMessage 无法建立与该角色的联系人。");
+
+      const chatSession = createOrGetSession(chatContact.id);
+      const pushed = pushChatMessage({
+        sessionId: chatSession.id,
+        role: "assistant",
+        content: chatText,
+        senderCharacterId: targetCharacterId,
+        senderName: chatCharacter.name,
+      });
+
+      // 未读计数 + 通知（让列表和红点能反映这条消息）
+      const latestSessions = loadChatSessions();
+      const sessionIndex = latestSessions.findIndex(item => item.id === chatSession.id);
+      if (sessionIndex !== -1) {
+        latestSessions[sessionIndex].unreadCount = (latestSessions[sessionIndex].unreadCount || 0) + 1;
+        saveChatSessions(latestSessions);
+      }
+      dispatchChatMessageNotice({
+        sessionId: chatSession.id,
+        body: chatText,
+        senderName: chatCharacter.name,
+        avatar: chatCharacter.avatar || null,
+        isGroup: false,
+      });
+
+      return { ok: true, delivered: 1, sessionId: chatSession.id, messageId: pushed.id };
     }
 
     if (action === "saveGame") {

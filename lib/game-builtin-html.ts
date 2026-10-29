@@ -1260,13 +1260,24 @@ const CHAT_FALLBACK = {
 };
 
 function trySendToChat(text) {
-  if (!G || !S.charObj || !S.charObj.id) return false;
+  if (!G || !S.charObj || !S.charObj.id) return Promise.resolve(false);
   const cid = S.charObj.id;
   try {
-    if (typeof G.sendMessage === 'function') { G.sendMessage({ characterId: cid, text: text }); return true; }
-    if (G.chat && typeof G.chat.send === 'function') { G.chat.send({ characterId: cid, text: text }); return true; }
+    if (typeof G.sendChatMessage === 'function') {
+      return Promise.resolve(G.sendChatMessage({ characterId: cid, text: text }))
+        .then(function (r) { return !!(r && r.ok && r.delivered > 0); })
+        .catch(function () { return false; });
+    }
+    if (typeof G.sendMessage === 'function') {
+      G.sendMessage({ characterId: cid, text: text });
+      return Promise.resolve(true);
+    }
+    if (G.chat && typeof G.chat.send === 'function') {
+      G.chat.send({ characterId: cid, text: text });
+      return Promise.resolve(true);
+    }
   } catch (e) {}
-  return false;
+  return Promise.resolve(false);
 }
 
 async function afterGameChat(winner, recorded) {
@@ -1310,7 +1321,8 @@ async function afterGameChat(winner, recorded) {
     return;
   }
 
-  if (trySendToChat(text)) {
+  const delivered = await trySendToChat(text);
+  if (delivered) {
     who.textContent = foe.name + ' 已发到聊天';
   } else {
     who.textContent = foe.name + ' 发来一条消息（回去聊天，它会接着这局说）';
