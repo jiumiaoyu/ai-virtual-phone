@@ -1,4 +1,4 @@
-import { DOUDIZHU_GAME_HTML, TIAOYITIAO_GAME_HTML, TRUTH_OR_DARE_GAME_HTML } from "./game-builtin-html";
+import { DOUDIZHU_GAME_HTML, TRUTH_OR_DARE_GAME_HTML } from "./game-builtin-html";
 import type { GameTemplate } from "./game-types";
 
 const now = "2026-06-06T00:00:00.000Z";
@@ -37,20 +37,6 @@ export const GAME_BUILTIN_TEMPLATES: GameTemplate[] = [
     roleSlots: [],
     pickerHtml: EMPTY_PICKER_HTML,
     gameHtml: DOUDIZHU_GAME_HTML,
-    allowExternalControl: true,
-  }),
-  template({
-    id: "builtin_game_tiaoyitiao",
-    title: "跳一跳 · 对决",
-    codeName: "HOP_HOP_DUEL",
-    subtitle: "和 TA 轮流跳方块，比谁落点更稳",
-    synopsis: "选一位角色当对手，在同一排方块上轮流蓄力起跳。简单、困难、地狱三档难度，跳到方块中央额外加分，跳空掉一条命。对手的准头按角色人设来定，但再强也会手滑。一局结束后，结果会写进角色的近期记忆。",
-    playNote: "按住蓄力、松手起跳。可在开局选择简单 / 困难 / 地狱三档，并挑选自己的造型。对手会按人设决定水平，中途会开口吐槽或得意。每局结束写入角色记忆。",
-    coverImage: "",
-    tags: ["休闲", "互动"],
-    roleSlots: [],
-    pickerHtml: EMPTY_PICKER_HTML,
-    gameHtml: TIAOYITIAO_GAME_HTML,
     allowExternalControl: true,
   }),
   template({
